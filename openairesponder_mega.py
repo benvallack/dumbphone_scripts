@@ -41,18 +41,34 @@ BULKSMS_ENDPOINT = "https://api.bulksms.com/v1/messages"  # Verify the endpoint 
 
 
 # Your phone number (as stored in Apple Messages handles)
-MY_NUMBER = "+44123456789"  # Replace with your dumphone number
+MY_NUMBER = ""  # Replace with your number
 
 
 # File to persist the last processed message date (an integer, as stored in the Messages DB)
 LAST_DATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_date.txt")
 
+# File to persist the last date used when summarising messages
+LAST_DATE_MSG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_date_messages.txt")
+
+# File to persist the last date used when summarising emains
+LAST_DATE_EMAIL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "last_date_emails.txt")
 
 # -------------------------------
 # Functions to handle the lock to make sure a slow process doesn't result in the script overlapping.
 # -------------------------------
 
 LOCK_FILE = "/tmp/autresponder.lock"  # Adjust path as needed
+
+# Define a dictionary with handle IDs mapped to contact names
+CONTACTS = {
+    "NUMBER": "NAME",
+    "": "",
+    # Add more numbers as needed
+}
+
+# Function to get contact name based on handle ID
+def get_contact_name(handle):
+    return CONTACTS.get(handle, handle)  # Return handle if not found
 
 def check_lock():
     """Check if another instance is already running."""
@@ -82,6 +98,27 @@ def load_last_date():
 def save_last_date(last_date):
     with open(LAST_DATE_FILE, "w") as f:
         f.write(str(last_date))
+
+
+def load_last_date_messages():
+    try:
+        with open(LAST_DATE_MSG_FILE, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return 0
+def save_last_date_messages(last_date_messages):
+    with open(LAST_DATE_MSG_FILE, "w") as f:
+        f.write(str(last_date_messages))
+
+def load_last_date_emails():
+    try:
+        with open(LAST_DATE_EMAIL_FILE, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return 0
+def save_last_date_emails(last_date_emails):
+    with open(LAST_DATE_EMAIL_FILE, "w") as f:
+        f.write(str(last_date_emails))
 
 
 def chatgpt_fix(text,orig):
@@ -740,7 +777,7 @@ def search_emails(message_text):
     set searchResults to ""
     set searchTerm to "{keyword}"
 
-    -- Get all inbox messages
+
     set inboxMessages to messages of inbox
     repeat with msg in inboxMessages
         set msgSubject to subject of msg
@@ -787,12 +824,13 @@ end tell
         print("Error using email search", e)
         return "Error using email search"
 
-def summarize_unread_emails(last_date):
+def summarize_unread_emails():
     """
     Retrieves new (unread) emails from Apple Mail whose 'date sent' is later than the given last_date.
     The last_date (an integer from the Messages DB) is assumed to be in Mac Absolute Time
     (seconds since January 1, 2001). We convert it to a string format that AppleScript can understand.
     """
+    last_date = load_last_date_emails()
     # Convert last_date to a Unix timestamp by adding the offset (978307200 seconds) then to UTC.
     last_date_seconds = last_date / 1e9
     unix_time = last_date_seconds + 978307200
@@ -813,6 +851,11 @@ def summarize_unread_emails(last_date):
         return output
     end tell
     '''
+
+    mac_absolute_time = time.time() - 978307200
+    mac_absolute_time = int(mac_absolute_time * 1_000_000_000)
+    save_last_date_emails(mac_absolute_time)
+
     process = subprocess.Popen(["osascript", "-e", applescript],
                                stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE)
@@ -836,42 +879,16 @@ def summarize_unread_emails(last_date):
         print("Error using email summary", e)
         return "Error using email summary"
 
-def get_contact_name(phone_number):
-    """
-    Looks up the contact name for a given phone number using the macOS Contacts app.
-    
-    Parameters:
-        phone_number (str): The phone number to look up.
-        
-    Returns:
-        str: The contact name if found, or 'Unknown' if no match.
-    """
-    # AppleScript to find the contact by phone number
-    applescript = f'''
-    tell application "Contacts"
-        repeat with person in people
-            repeat with phone in phones of person
-                if value of phone contains "{phone_number}" then
-                    return name of person
-                end if
-            end repeat
-        end repeat
-    end tell
-    return "Unknown"
-    '''
-    try:
-        # Execute the AppleScript and get the result
-        result = subprocess.check_output(["osascript", "-e", applescript], text=True).strip()
-        return result if result else "Unknown"
-    except subprocess.CalledProcessError as e:
-        return f"Error: {e}"
 
-def summarize_unread_messages(last_date):
+def summarize_unread_messages():
     """
-    Retrieves new inbound (unread) messages from the Apple Messages database with a timestamp greater than last_date.
+    Retrieves new inbound (unread) messages from the Apple Messages database with a timestamp greater than last_date_messages.
     This function returns only messages that are still unread (is_read = 0).
     Note: Adjust the query if your Messages database uses a different column name.
     """
+    last_date_messages = load_last_date_messages()
+    
+
     db_path = os.path.expanduser("~/Library/Messages/chat.db")
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -879,25 +896,28 @@ def summarize_unread_messages(last_date):
     # Added "AND is_read = 0" to filter only unread messages.
     cursor.execute("""SELECT handle.id as handle, text, date, is_from_me FROM message 
                 JOIN handle ON message.handle_id = handle.ROWID
-                   WHERE text != 'None' AND is_from_me = 0 AND is_read = 0 AND date > ? ORDER BY date ASC""", (last_date,))
+                   WHERE text != 'None' AND is_from_me = 0 AND handle.id != ? AND is_read = 0 AND date > ? ORDER BY date ASC""", (MY_NUMBER,last_date_messages,))
+    mac_absolute_time = time.time() - 978307200
+    mac_absolute_time = int(mac_absolute_time * 1_000_000_000)
+    save_last_date_messages(mac_absolute_time)
     results = cursor.fetchall()
     conn.close()
+    print(results);
     messages_list = []
     for row in results:
         messages_list.append({
             "text": row["text"],
             "date": row["date"],
-            "from": row["handle"],
-            #"from": get_contact_name(row["handle"]),
+            "from": get_contact_name(row["handle"]),
         })
     if messages_list:
         model_name = "llama3.2"  # Replace with your local model name in Ollama.
         # Create a summarisation prompt.
         prompt = f"Summarize these messages, fit within 160 characters. Include the sender name. The messages will all be to the user: {messages_list}"
-        print(prompt)
         try:
             result = subprocess.check_output(["ollama", "run", model_name, prompt],
-                                             stderr=subprocess.STDOUT)
+            stderr=subprocess.STDOUT)
+            print(result.decode("utf-8").strip())
             return result.decode("utf-8").strip()
         except Exception as e:
             return f"Error running Ollama model: {e}"
@@ -925,11 +945,11 @@ def process_message(message_text, last_date):
     elif command_type == "WEATHER":
         result = get_weather(message_text,GOOGLE_DIRECTIONS_API_KEY)
     elif command_type == "EMAIL_SUMMARY":
-        result = summarize_unread_emails(last_date)
+        result = summarize_unread_emails()
     elif command_type == "EMAIL_SEARCH":
         result = search_emails(message_text)
     elif command_type == "MESSAGES_SUMMARY":
-        result = summarize_unread_messages(last_date)
+        result = summarize_unread_messages()
     else:
         result = "Sorry, I did not understand your command."
     
@@ -1022,6 +1042,17 @@ def main():
         remove_lock()  # Ensure lock is removed on exit
     
 
-if __name__ == '__main__':
-    main()
+def main_wrapper():
+    for _ in range(5):
+        main()  # Call your main function
+        time.sleep(10)  # Wait for 10 seconds
+
+if __name__ == "__main__":
+    # Use when running every minute in a cron - this runs every 10 seconds 5 times then exits
+    main_wrapper()
+
+# Use below for debugging 
+    #last_date = load_last_date()
+    #reply = process_message("check messages",last_date)
+
 
