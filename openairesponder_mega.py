@@ -12,6 +12,7 @@ import shutil
 from datetime import datetime
 import os
 import sys
+os.environ["PATH"] = "/usr/local/bin"  # Adjust if needed
 
 
 # -------------------------------
@@ -61,7 +62,8 @@ LOCK_FILE = "/tmp/autresponder.lock"  # Adjust path as needed
 
 # Define a dictionary with handle IDs mapped to contact names
 CONTACTS = {
-    "NUMBER": "NAME",
+    "": "",
+    "": "",
     "": "",
     # Add more numbers as needed
 }
@@ -151,9 +153,15 @@ def ollama_fix(text):
     # Create a summarisation prompt.
     prompt = f"Improve, return only the improved text: {text}"
     try:
-        result = subprocess.check_output(["ollama", "run", model_name, prompt],
-                                         stderr=subprocess.STDOUT)
-        return result.decode("utf-8").strip()
+            process = subprocess.Popen(
+                ["ollama", "run", model_name],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,  # Suppress progress output
+                text=True
+            )
+            result, _ = process.communicate(prompt)  # Send the prompt via stdin
+            return result.strip()
     except Exception as e:
         return f"Error running Ollama model: {e}"
 
@@ -171,9 +179,15 @@ def ollama_summarise(text):
     # Create a summarisation prompt.
     prompt = f"Summarize the following content concisely:\n\n{text}"
     try:
-        result = subprocess.check_output(["ollama", "run", model_name, prompt],
-                                         stderr=subprocess.STDOUT)
-        return result.decode("utf-8").strip()
+        process = subprocess.Popen(
+            ["ollama", "run", model_name],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # Suppress progress output
+            text=True
+        )
+        result, _ = process.communicate(prompt)  # Send the prompt via stdin
+        return result.strip()
     except Exception as e:
         return f"Error running Ollama model: {e}"
 
@@ -814,10 +828,15 @@ end tell
         prompt = f"Look at these emails and respond with the result to this task: {task}. Return just the result of the task. If no obvious result just respond with 'Unable to find' "
         # Create a summarisation prompt.
         try:
-            result = subprocess.check_output(["ollama", "run", model_name, prompt + "Emails: " + plain_text],
-            stderr=subprocess.STDOUT)
-            print(result.decode("utf-8").strip())
-            return result.decode("utf-8").strip()
+            process = subprocess.Popen(
+                ["ollama", "run", model_name],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,  # Suppress progress output
+                text=True
+            )
+            result, _ = process.communicate(prompt + "Emails: " + plain_text)  # Send the prompt via stdin
+            return result.strip()
         except Exception as e:
             return f"Error running Ollama model: {e}"
     except Exception as e:
@@ -869,10 +888,16 @@ def summarize_unread_emails():
         prompt = "Look at these emails. Ignore any marketing emails. Then return a 160 character summary of topics and senders. Return only the summary with no introduction."
         # Create a summarisation prompt.
         try:
-            result = subprocess.check_output(["ollama", "run", model_name, prompt + "Emails: " + unread],
-                                             stderr=subprocess.STDOUT)
-            print(result.decode("utf-8").strip())
-            return result.decode("utf-8").strip()
+            process = subprocess.Popen(
+                ["ollama", "run", model_name],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,  # Suppress progress output
+                text=True
+            )
+            result, _ = process.communicate(prompt + "Emails: " + unread)  # Send the prompt via stdin
+            print(result.strip())
+            return result.strip()
         except Exception as e:
             return f"Error running Ollama model: {e}"
     except Exception as e:
@@ -902,7 +927,6 @@ def summarize_unread_messages():
     save_last_date_messages(mac_absolute_time)
     results = cursor.fetchall()
     conn.close()
-    print(results);
     messages_list = []
     for row in results:
         messages_list.append({
@@ -910,15 +934,21 @@ def summarize_unread_messages():
             "date": row["date"],
             "from": get_contact_name(row["handle"]),
         })
+    messages_json = json.dumps(messages_list, ensure_ascii=False)
     if messages_list:
         model_name = "llama3.2"  # Replace with your local model name in Ollama.
         # Create a summarisation prompt.
-        prompt = f"Summarize these messages, fit within 160 characters. Include the sender name. The messages will all be to the user: {messages_list}"
+        prompt = f"Summarize these messages, fit within 160 characters. Include the sender name.Return only the summary, no additional information. The messages will all be to the user: {messages_json}."
         try:
-            result = subprocess.check_output(["ollama", "run", model_name, prompt],
-            stderr=subprocess.STDOUT)
-            print(result.decode("utf-8").strip())
-            return result.decode("utf-8").strip()
+            process = subprocess.Popen(
+                ["ollama", "run", model_name],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,  # Suppress progress output
+                text=True
+            )
+            result, _ = process.communicate(prompt)  # Send the prompt via stdin
+            return result.strip()
         except Exception as e:
             return f"Error running Ollama model: {e}"
     else:
@@ -1052,7 +1082,7 @@ if __name__ == "__main__":
     main_wrapper()
 
 # Use below for debugging 
-    #last_date = load_last_date()
-    #reply = process_message("check messages",last_date)
+#    last_date = load_last_date()
+#    reply = process_message("check messages",last_date)
 
 
